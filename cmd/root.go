@@ -27,6 +27,11 @@ var rootCmd = cobra.NewRootCommand(func(c *cobra.Command) {
 	c.PersistentFlags().StringSliceP("excludes", "e", []string{}, "exclude proxy names, after filter by include")
 	c.PersistentFlags().BoolP("confirm", "y", false, "confirm to start speedtest")
 	c.PersistentFlags().StringP("output", "o", filepath.Join(osutil.ExeDir(), "output"), "output file path")
+	c.PersistentFlags().BoolP("ping", "p", false, "enable periodic ping test during speedtest")
+	c.PersistentFlags().Int("ping-interval", 60, "ping interval in seconds")
+	c.PersistentFlags().Int("ping-timeout", 5000, "ping timeout in milliseconds")
+	c.PersistentFlags().StringP("format", "f", "txt", "output format: txt or png")
+	c.PersistentFlags().IntP("concurrent", "n", 1, "number of nodes to test concurrently (1-5)")
 
 	c.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		config.LoadFlags(c.PersistentFlags())

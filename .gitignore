@@ -2,6 +2,10 @@
 /.idea
 /*.iml
 
+# VSCode
+/.vscode
+*.code-workspace
+
 # Compiled files
 /bin
 /dist
@@ -10,5 +14,32 @@
 *.exe
 *.log
 
+# Output files
+/output
+output/
+
 # Dev files
 clash-speedtest*.yaml
+
+# Test files
+*test*.txt
+*debug*.exe
+*fixed*.exe
+调试*.md
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Go files
+vendor/
+*.test
+*.prof

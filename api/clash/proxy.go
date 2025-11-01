@@ -2,6 +2,7 @@ package clash
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 
 	"github.com/starudream/go-lib/core/v2/gh"
@@ -53,6 +54,7 @@ var AvailAdapters = []string{
 	"Hysteria2",
 	"WireGuard",
 	"Tuic",
+	"AnyTLS",
 }
 
 func (c *Client) GetProxies() (*GetProxiesResp, error) {
@@ -79,4 +81,39 @@ func (c *Client) SetGlobalProxy(name string) error {
 	}
 
 	return nil
+}
+
+type DelayTestResp struct {
+	Delay uint16 `json:"delay"` // milliseconds
+}
+
+// TestProxyDelay tests proxy delay/ping
+// timeout in milliseconds (e.g., 5000 for 5 seconds)
+// testURL is the test URL (default: http://www.gstatic.com/generate_204)
+func (c *Client) TestProxyDelay(name string, timeout uint16, testURL string) (uint16, error) {
+	if testURL == "" {
+		testURL = "http://www.gstatic.com/generate_204"
+	}
+	
+	// URL encode the proxy name to handle special characters (emoji, spaces, etc.)
+	encodedName := url.PathEscape(name)
+	
+	resp, err := c.R().
+		SetResult(&DelayTestResp{}).
+		SetQueryParams(map[string]string{
+			"timeout": fmt.Sprintf("%d", timeout),
+			"url":     testURL,
+		}).
+		Get(c.Addr + "/proxies/" + encodedName + "/delay")
+	
+	if err != nil {
+		return 0, err
+	}
+
+	if !resp.IsSuccess() {
+		return 0, fmt.Errorf("response status %s", resp.Status())
+	}
+
+	result := resp.Result().(*DelayTestResp)
+	return result.Delay, nil
 }

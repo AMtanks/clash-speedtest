@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/starudream/go-lib/core/v2/slog"
 
@@ -30,18 +31,15 @@ func (t *Task) Down(result *Result) (err error) {
 		return err
 	}
 
-	pool, bars := util.NewBarsPool(t.Threads, result.Proxy.Name)
-
+	// Use log mode instead of progress bars for concurrent testing
 	wg := sync.WaitGroup{}
 	wg.Add(t.Threads)
 
 	for i := 0; i < t.Threads; i++ {
-		go func(i int) { down(i, bars[i], &wg) }(i)
+		go func(i int) { down(i, nil, &wg) }(i)
 	}
 
 	wg.Wait()
-
-	_ = pool.Stop()
 
 	return nil
 }
@@ -131,9 +129,44 @@ func (t *Task) downFast(result *Result) (downFunc, error) {
 
 func (t *Task) progress(bar *util.ProgressBar) common.DownloadBodyFunc {
 	return func(body io.ReadCloser, size int64) error {
-		defer bar.Finish()
-		bar.SetTotal(size)
-		_, err := io.Copy(io.Discard, bar.NewProxyReader(body))
-		return err
+		if bar != nil {
+			defer bar.Finish()
+			bar.SetTotal(size)
+			_, err := io.Copy(io.Discard, bar.NewProxyReader(body))
+			return err
+		}
+		
+		// Log mode: periodically output progress
+		buf := make([]byte, 32*1024) // 32KB chunks
+		var downloaded int64
+		startTime := time.Now()
+		lastLog := time.Now()
+		
+		for {
+			n, err := body.Read(buf)
+			if n > 0 {
+				downloaded += int64(n)
+				
+				// Log every 2 seconds
+				if time.Since(lastLog) >= 2*time.Second {
+					elapsed := time.Since(startTime).Seconds()
+					speed := float64(downloaded) / elapsed / 1024 / 1024
+					percent := float64(downloaded) * 100 / float64(size)
+					slog.Info("downloading: %.1f%% (%.2f MB / %.2f MB) @ %.2f MB/s",
+						percent,
+						float64(downloaded)/1024/1024,
+						float64(size)/1024/1024,
+						speed)
+					lastLog = time.Now()
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 }

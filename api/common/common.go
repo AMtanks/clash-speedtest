@@ -52,3 +52,5 @@ func Download(req *resty.Request, url string, size int64, fn DownloadBodyFunc) (
 	}
 	return res, nil
 }
+
+
