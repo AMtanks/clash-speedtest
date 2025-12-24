@@ -1,8 +1,9 @@
-package job
+﻿package job
 
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,11 @@ import (
 	"github.com/starudream/go-lib/core/v2/utils/maputil"
 
 	"github.com/starudream/clash-speedtest/api/clash"
+	"github.com/starudream/clash-speedtest/api/cloudflare"
+	"github.com/starudream/clash-speedtest/api/common"
+	"github.com/starudream/clash-speedtest/api/fast"
+	"github.com/starudream/clash-speedtest/api/speedtest"
+	"github.com/starudream/clash-speedtest/util"
 )
 
 type WebTask struct {
@@ -18,6 +24,8 @@ type WebTask struct {
 	broadcast chan<- interface{}
 	speedUpdates map[string]*SpeedTracker
 	speedMutex sync.RWMutex
+	StopChan   <-chan struct{}
+	Downloads  []string
 }
 
 type SpeedTracker struct {
@@ -26,23 +34,35 @@ type SpeedTracker struct {
 }
 
 func NewTaskFromConfig(config map[string]interface{}, broadcast chan<- interface{}) *WebTask {
+	// Get download methods (support multiple)
+	downloads := getStringSlice(config, "downloads")
+	if len(downloads) == 0 {
+		downloads = []string{getString(config, "download", "cloudflare")}
+	}
+	
+	// Use first download method as default
+	downloadMethod := downloads[0]
+	if len(downloads) > 0 {
+		downloadMethod = downloads[0]
+	}
+	
 	task := &Task{
 		ClashAddr:       getString(config, "clash_addr", "http://127.0.0.1:9090"),
 		ClashSecret:     getString(config, "clash_secret", ""),
 		ClashProxy:      getString(config, "clash_proxy", ""),
 		Size:            getInt(config, "size", 10),
 		Threads:         getInt(config, "threads", 1),
-		Download:        getString(config, "download", "cloudflare"),
+		Download:        downloadMethod,
 		Includes:        getStringSlice(config, "includes"),
 		Excludes:        getStringSlice(config, "excludes"),
 		Confirm:         true,
 		Output:          getString(config, "output", "output"),
-		Timeout:         getInt(config, "timeout", 60),
-		EnablePing:      getBool(config, "ping", false),
-		PingInterval:    getInt(config, "ping_interval", 60),
+		Timeout:         getInt(config, "timeout", 15),
+		EnablePing:      getBool(config, "ping", true),
+		PingInterval:    getInt(config, "ping_interval", 20),
 		PingTimeout:     getInt(config, "ping_timeout", 5000),
-		OutputFormat:    getString(config, "format", "txt"),
-		ConcurrentNodes: getInt(config, "concurrent", 1),
+		OutputFormat:    getString(config, "format", "png"),
+		ConcurrentNodes: getInt(config, "concurrent", 2),
 		results:         maputil.SyncMap[string, *Result]{},
 	}
 	
@@ -50,6 +70,7 @@ func NewTaskFromConfig(config map[string]interface{}, broadcast chan<- interface
 		Task:         task,
 		broadcast:    broadcast,
 		speedUpdates: make(map[string]*SpeedTracker),
+		Downloads:    downloads,
 	}
 }
 
@@ -83,30 +104,47 @@ func (wt *WebTask) Run() error {
 		}
 	}()
 	
-	// Start ping monitoring if enabled
+	// Start ping monitoring if enabled - runs throughout entire speedtest
 	if wt.EnablePing {
 		wt.pingStop = make(chan struct{})
 		go wt.pingMonitorWithBroadcast()
 		wt.sendLog("info", fmt.Sprintf("Ping monitoring enabled (interval: %ds)", wt.PingInterval))
 	}
 	
+	// Ensure ping monitoring stops before function returns
 	defer func() {
 		if wt.EnablePing && wt.pingStop != nil {
 			close(wt.pingStop)
-			time.Sleep(100 * time.Millisecond)
+			// Wait longer to ensure ping goroutine fully exits
+			time.Sleep(500 * time.Millisecond)
 		}
 	}()
 	
-	// Run speedtest with progress updates
-	wt.sendLog("info", fmt.Sprintf("Starting speedtest with %d concurrent workers...", wt.ConcurrentNodes))
-	err = wt.runSpeedtestWithProgress()
-	if err != nil {
-		wt.sendLog("error", fmt.Sprintf("Speedtest failed: %v", err))
-		return err
+	// Test with each download method
+	downloadMethods := wt.Downloads
+	if len(downloadMethods) == 0 {
+		downloadMethods = []string{wt.Download}
+	}
+	
+	for _, method := range downloadMethods {
+		wt.Download = method
+		wt.sendLog("info", fmt.Sprintf("Starting speedtest with %s method...", method))
+		
+		// Run speedtest with progress updates
+		wt.sendLog("info", fmt.Sprintf("Starting speedtest with %d concurrent workers...", wt.ConcurrentNodes))
+		err = wt.runSpeedtestWithProgress()
+		if err != nil {
+			wt.sendLog("error", fmt.Sprintf("Speedtest failed: %v", err))
+			return err
+		}
 	}
 	
 	wt.sendLog("info", "Speedtest completed, sending results...")
 	wt.sendResults()
+	
+	// Output results to file
+	wt.sendLog("info", "Generating output files...")
+	wt.Render()
 	
 	return nil
 }
@@ -125,10 +163,27 @@ func (wt *WebTask) runSpeedtestWithProgress() error {
 	for w := 0; w < wt.ConcurrentNodes; w++ {
 		go func(workerID int) {
 			for job := range proxyQueue {
+				// Check if stop signal received
+				select {
+				case <-wt.StopChan:
+					wt.sendLog("info", fmt.Sprintf("Worker %d received stop signal", workerID+1))
+					return
+				default:
+				}
+				
 				proxy := job.proxy
 				
 				wt.sendProgress(job.index+1, len(wt.proxies), proxy.Name, "testing")
 				wt.sendLog("info", fmt.Sprintf("Worker %d testing: %s", workerID+1, proxy.Name))
+				
+				// Create result object early and store it for monitoring
+				result := &Result{
+					Proxy:     proxy,
+					threads:   wt.Threads,
+					total:     &common.DownloadResult{},
+					downloads: make([]*common.DownloadResult, wt.Threads),
+				}
+				wt.results.Store(proxy.Name, result)
 				
 				// Start speed monitoring for this proxy
 				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(wt.Timeout)*time.Second)
@@ -136,22 +191,37 @@ func (wt *WebTask) runSpeedtestWithProgress() error {
 				
 				go wt.monitorSpeed(ctx, proxy.Name)
 				
-				result, err := wt.TestWithTimeout(proxy, time.Duration(wt.Timeout)*time.Second)
+				testResult, err := wt.TestWithTimeout(proxy, time.Duration(wt.Timeout)*time.Second, result)
 				cancel() // Stop speed monitoring
 				
+				// Update result if test succeeded
+				if testResult != nil {
+					result = testResult
+					wt.results.Store(proxy.Name, result)
+				}
+				
+				isTimeout := false
 				if err != nil {
 					// Check if it's a timeout error
 					if ctx.Err() == context.DeadlineExceeded || strings.Contains(err.Error(), "context deadline exceeded") {
-						wt.sendLog("error", fmt.Sprintf("Worker %d timeout for %s, using average speed", workerID+1, proxy.Name))
-						// Use average speed from partial results
-						if result != nil && result.GetAvgSpeed() > 0 {
-							wt.results.Store(proxy.Name, result)
-							wt.sendResult(proxy.Name, result)
-							results <- result
-							continue
+						isTimeout = true
+						speed := result.GetAvgSpeed()
+						if speed > 0 {
+							wt.sendLog("info", fmt.Sprintf("Worker %d: %s 超时，使用部分结�?(%.2f MB/s)", workerID+1, proxy.Name, speed))
+						} else {
+							wt.sendLog("info", fmt.Sprintf("Worker %d: %s 超时，无可用数据", workerID+1, proxy.Name))
 						}
+						
+						// Send result with whatever data we have
+						wt.sendResult(proxy.Name, result, true)
+						results <- result
+						continue
 					}
+					
 					wt.sendLog("error", fmt.Sprintf("Worker %d failed to test %s: %v", workerID+1, proxy.Name, err))
+					
+					// Send failed result
+					wt.sendResult(proxy.Name, result, false)
 					errors <- err
 					continue
 				}
@@ -166,7 +236,7 @@ func (wt *WebTask) runSpeedtestWithProgress() error {
 					}
 				}
 				
-				wt.sendResult(proxy.Name, result)
+				wt.sendResult(proxy.Name, result, isTimeout)
 				results <- result
 			}
 		}(w)
@@ -178,7 +248,7 @@ func (wt *WebTask) runSpeedtestWithProgress() error {
 	}
 	close(proxyQueue)
 	
-	// Wait for completion
+	// Wait for completion or stop signal
 	completedCount := 0
 	errorCount := 0
 	for completedCount+errorCount < len(wt.proxies) {
@@ -187,6 +257,22 @@ func (wt *WebTask) runSpeedtestWithProgress() error {
 			completedCount++
 		case <-errors:
 			errorCount++
+		case <-wt.StopChan:
+			wt.sendLog("info", fmt.Sprintf("Received stop signal, stopping all workers (completed: %d, failed: %d)", completedCount, errorCount))
+			// Drain remaining results to avoid goroutine leak
+			go func() {
+				for completedCount+errorCount < len(wt.proxies) {
+					select {
+					case <-results:
+						completedCount++
+					case <-errors:
+						errorCount++
+					case <-time.After(100 * time.Millisecond):
+						return
+					}
+				}
+			}()
+			return nil
 		}
 	}
 	
@@ -217,20 +303,25 @@ func (wt *WebTask) pingMonitorWithBroadcast() {
 
 func (wt *WebTask) sendLog(level, message string) {
 	if wt.broadcast != nil {
-		wt.broadcast <- map[string]interface{}{
+		select {
+		case wt.broadcast <- map[string]interface{}{
 			"type": "log",
 			"data": map[string]interface{}{
 				"level":   level,
 				"message": message,
 				"time":    time.Now().Format("15:04:05"),
 			},
+		}:
+		default:
+			// Channel full or closed, skip this update
 		}
 	}
 }
 
 func (wt *WebTask) sendProgress(current, total int, proxyName, status string) {
 	if wt.broadcast != nil {
-		wt.broadcast <- map[string]interface{}{
+		select {
+		case wt.broadcast <- map[string]interface{}{
 			"type": "progress",
 			"data": map[string]interface{}{
 				"current":    current,
@@ -238,46 +329,80 @@ func (wt *WebTask) sendProgress(current, total int, proxyName, status string) {
 				"proxy_name": proxyName,
 				"status":     status,
 			},
+		}:
+		default:
+			// Channel full or closed, skip this update
 		}
 	}
 }
 
-func (wt *WebTask) sendResult(proxyName string, result *Result) {
+func (wt *WebTask) sendResult(proxyName string, result *Result, isTimeout bool) {
 	if wt.broadcast != nil {
-		wt.broadcast <- map[string]interface{}{
+		// Calculate speed min/max from downloads
+		var speedMin, speedMax float64
+		for _, dl := range result.downloads {
+			if dl != nil && dl.RespTime > 0 {
+				speed := float64(dl.TotalSize) / dl.RespTime.Seconds() / 1024 / 1024
+				if speedMin == 0 || speed < speedMin {
+					speedMin = speed
+				}
+				if speed > speedMax {
+					speedMax = speed
+				}
+			}
+		}
+		
+		select {
+		case wt.broadcast <- map[string]interface{}{
 			"type": "result",
 			"data": map[string]interface{}{
 				"proxy_name": proxyName,
 				"speed":      result.GetAvgSpeed(),
+				"speed_min":  speedMin,
+				"speed_max":  speedMax,
 				"ping_min":   result.pingMin,
 				"ping_max":   result.pingMax,
 				"ping_avg":   result.GetPingAvg(),
 				"ping_count": result.pingCount,
+				"is_timeout": isTimeout,
 			},
+		}:
+		default:
+			// Channel full or closed, skip this update
 		}
 	}
 }
 
 func (wt *WebTask) sendPingUpdate(proxyName string, delay uint16) {
 	if wt.broadcast != nil {
-		wt.broadcast <- map[string]interface{}{
+		// Use non-blocking send to prevent panic if channel is closed
+		select {
+		case wt.broadcast <- map[string]interface{}{
 			"type": "ping_update",
 			"data": map[string]interface{}{
 				"proxy_name": proxyName,
 				"delay":      delay,
 			},
+		}:
+		default:
+			// Channel full or closed, skip this update
 		}
 	}
 }
 
 func (wt *WebTask) sendSpeedUpdate(proxyName string, speed float64) {
 	if wt.broadcast != nil {
-		wt.broadcast <- map[string]interface{}{
+		// Use non-blocking send to prevent panic if channel is closed
+		select {
+		case wt.broadcast <- map[string]interface{}{
 			"type": "speed_update",
 			"data": map[string]interface{}{
 				"proxy_name": proxyName,
 				"speed":      speed,
 			},
+		}:
+		default:
+			// Channel full or closed, skip this update
 		}
 	}
 }
@@ -301,7 +426,7 @@ func (wt *WebTask) monitorSpeed(ctx context.Context, proxyName string) {
 	}
 }
 
-func (wt *WebTask) TestWithTimeout(proxy *clash.Proxy, timeout time.Duration) (*Result, error) {
+func (wt *WebTask) TestWithTimeout(proxy *clash.Proxy, timeout time.Duration, preResult *Result) (*Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	
@@ -309,21 +434,52 @@ func (wt *WebTask) TestWithTimeout(proxy *clash.Proxy, timeout time.Duration) (*
 	errChan := make(chan error, 1)
 	
 	go func() {
-		result, err := wt.Test(proxy)
-		if err != nil {
-			errChan <- err
+		// Use the pre-created result if provided
+		var result *Result
+		var err error
+		
+		if preResult != nil {
+			// Set global proxy
+			err = wt.clash.SetGlobalProxy(proxy.Name)
+			if err != nil {
+				errChan <- err
+				return
+			}
+			
+			// Run download with pre-created result
+			err = wt.Down(preResult)
+			if err != nil {
+				errChan <- err
+				return
+			}
+			result = preResult
 		} else {
-			resultChan <- result
+			// Fallback to normal Test
+			result, err = wt.Test(proxy)
+			if err != nil {
+				errChan <- err
+				return
+			}
 		}
+		
+		resultChan <- result
 	}()
 	
 	select {
 	case result := <-resultChan:
 		return result, nil
 	case err := <-errChan:
+		// Return partial result even on error
+		if preResult != nil {
+			return preResult, err
+		}
 		return nil, err
 	case <-ctx.Done():
-		// Timeout occurred, try to get partial result
+		// Timeout occurred, return partial result
+		if preResult != nil {
+			return preResult, ctx.Err()
+		}
+		// Try to get from stored results
 		if result, ok := wt.results.Load(proxy.Name); ok {
 			return result, ctx.Err()
 		}
@@ -340,12 +496,29 @@ func (wt *WebTask) sendProxies() {
 				"type": p.Type,
 			}
 		}
-		wt.broadcast <- map[string]interface{}{
+		
+		// 获取订阅信息
+		var providerNames []string
+		if wt.providers != nil {
+			for name := range wt.providers.Providers {
+				providerNames = append(providerNames, name)
+			}
+			slog.Info("sending %d providers to web UI", len(providerNames))
+		} else {
+			slog.Info("no providers to send to web UI")
+		}
+		
+		select {
+		case wt.broadcast <- map[string]interface{}{
 			"type": "proxies",
 			"data": map[string]interface{}{
-				"proxies": proxies,
-				"total":   len(proxies),
+				"proxies":   proxies,
+				"total":     len(proxies),
+				"providers": providerNames,
 			},
+		}:
+		default:
+			// Channel full or closed, skip this update
 		}
 	}
 }
@@ -366,11 +539,15 @@ func (wt *WebTask) sendResults() {
 				})
 			}
 		}
-		wt.broadcast <- map[string]interface{}{
+		select {
+		case wt.broadcast <- map[string]interface{}{
 			"type": "all_results",
 			"data": map[string]interface{}{
 				"results": results,
 			},
+		}:
+		default:
+			// Channel full or closed, skip this update
 		}
 	}
 }
@@ -419,4 +596,168 @@ func getStringSlice(m map[string]interface{}, key string) []string {
 		}
 	}
 	return []string{}
+}
+
+
+// Override progress method to send realtime speed updates
+func (wt *WebTask) progress(bar *util.ProgressBar, proxyName string) common.DownloadBodyFunc {
+	return func(body io.ReadCloser, size int64) error {
+		if bar != nil {
+			defer bar.Finish()
+			bar.SetTotal(size)
+			_, err := io.Copy(io.Discard, bar.NewProxyReader(body))
+			return err
+		}
+		
+		// Log mode: periodically output progress
+		buf := make([]byte, 32*1024) // 32KB chunks
+		var downloaded int64
+		startTime := time.Now()
+		lastLog := time.Now()
+		
+		for {
+			n, err := body.Read(buf)
+			if n > 0 {
+				downloaded += int64(n)
+				
+				// Log every 2 seconds
+				if time.Since(lastLog) >= 2*time.Second {
+					elapsed := time.Since(startTime).Seconds()
+					speed := float64(downloaded) / elapsed / 1024 / 1024
+					percent := float64(downloaded) * 100 / float64(size)
+					
+					// Send realtime speed update
+					wt.sendSpeedUpdate(proxyName, speed)
+					
+					slog.Info("downloading: %.1f%% (%.2f MB / %.2f MB) @ %.2f MB/s",
+						percent,
+						float64(downloaded)/1024/1024,
+						float64(size)/1024/1024,
+						speed)
+					lastLog = time.Now()
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+
+// Override Down method to use custom progress with realtime updates
+func (wt *WebTask) Down(result *Result) error {
+	var down downFunc
+	var err error
+	
+	switch wt.Download {
+	case "cloudflare":
+		down, err = wt.downCloudflare(result)
+	case "speedtest":
+		down, err = wt.downSpeedtest(result)
+	case "fast":
+		down, err = wt.downFast(result)
+	default:
+		return fmt.Errorf("unknown download type: %s", wt.Download)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Use log mode instead of progress bars for concurrent testing
+	wg := sync.WaitGroup{}
+	wg.Add(wt.Threads)
+
+	for i := 0; i < wt.Threads; i++ {
+		go func(i int) { down(i, nil, &wg) }(i)
+	}
+
+	wg.Wait()
+
+	return nil
+}
+
+func (wt *WebTask) downCloudflare(result *Result) (downFunc, error) {
+	cli := cloudflare.NewClient().WithProxy(wt.ClashProxy)
+
+	cfg, err := cli.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+	result.Ip = cfg.Ip
+	result.Country = cfg.Country
+	result.Lat = cfg.Lat
+	result.Lon = cfg.Lon
+
+	fn := func(i int, bar *util.ProgressBar, wg *sync.WaitGroup) {
+		defer wg.Done()
+		res, err2 := cli.Download(wt.Size, wt.progress(bar, result.Proxy.Name))
+		if err2 != nil {
+			slog.Error("cloudflare error: %v", err2)
+			return
+		}
+		result.SetDownload(i, res)
+	}
+
+	return fn, nil
+}
+
+func (wt *WebTask) downSpeedtest(result *Result) (downFunc, error) {
+	cli := speedtest.NewClient().WithProxy(wt.ClashProxy)
+
+	cfg, err := cli.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+	result.Ip = cfg.Client.Ip
+	result.Country = cfg.Client.Country
+	result.Lat = cfg.Client.Lat
+	result.Lon = cfg.Client.Lon
+
+	servers, err := cli.GetServers()
+	if err != nil {
+		return nil, err
+	}
+
+	fn := func(i int, bar *util.ProgressBar, wg *sync.WaitGroup) {
+		defer wg.Done()
+		server := servers[i%len(servers)]
+		res, err2 := cli.Download(server, wt.Size, wt.progress(bar, result.Proxy.Name))
+		if err2 != nil {
+			slog.Error("speedtest error: %v", err2)
+			return
+		}
+		result.SetDownload(i, res)
+	}
+
+	return fn, nil
+}
+
+func (wt *WebTask) downFast(result *Result) (downFunc, error) {
+	cli := fast.NewClient().WithProxy(wt.ClashProxy)
+
+	cfg, err := cli.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+	result.Ip = cfg.Client.Ip
+	result.Country = cfg.Client.Location.Country
+	result.City = cfg.Client.Location.City
+
+	fn := func(i int, bar *util.ProgressBar, wg *sync.WaitGroup) {
+		defer wg.Done()
+		target := cfg.Targets[i%len(cfg.Targets)]
+		res, err2 := cli.Download(target, wt.Size, wt.progress(bar, result.Proxy.Name))
+		if err2 != nil {
+			slog.Error("fast error: %v", err2)
+			return
+		}
+		result.SetDownload(i, res)
+	}
+
+	return fn, nil
 }

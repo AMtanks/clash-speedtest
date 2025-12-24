@@ -20,17 +20,12 @@ const (
 )
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Check if it's a WebSocket upgrade request
-	if r.Header.Get("Upgrade") != "websocket" {
-		http.Error(w, "Expected WebSocket connection", http.StatusBadRequest)
-		return
-	}
-	
-	// Create SSE connection as fallback
+	// Use Server-Sent Events (SSE) for real-time updates
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("X-Accel-Buffering", "no")
 	
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -52,13 +47,24 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		delete(s.clients, client)
 		s.clientMutex.Unlock()
 		close(client.send)
+		slog.Info("SSE client disconnected")
 	}()
 	
-	slog.Info("WebSocket client connected")
+	slog.Info("SSE client connected")
 	
 	// Send initial connection message
-	w.Write([]byte("data: {\"type\":\"connected\",\"data\":{\"message\":\"Connected to speedtest server\"}}\n\n"))
+	initialMsg := []byte("data: {\"type\":\"connected\",\"data\":{\"message\":\"Connected to speedtest server\"}}\n\n")
+	w.Write(initialMsg)
 	flusher.Flush()
+	
+	// Send a test message after 1 second
+	go func() {
+		time.Sleep(1 * time.Second)
+		select {
+		case client.send <- []byte("{\"type\":\"log\",\"data\":{\"level\":\"info\",\"message\":\"SSE connection established\",\"time\":\"" + time.Now().Format("15:04:05") + "\"}}"):
+		case <-r.Context().Done():
+		}
+	}()
 	
 	// Listen for messages
 	for {
@@ -68,13 +74,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			
+			// Write SSE format: data: <json>\n\n
 			w.Write([]byte("data: "))
 			w.Write(message)
 			w.Write([]byte("\n\n"))
 			flusher.Flush()
 			
 		case <-r.Context().Done():
-			slog.Info("WebSocket client disconnected")
 			return
 		}
 	}

@@ -19,9 +19,10 @@ var staticFiles embed.FS
 
 type Server struct {
 	Port        int
-	task        *job.Task
+	webTask     *job.WebTask
 	taskMutex   sync.RWMutex
 	isRunning   bool
+	stopChan    chan struct{}
 	clients     map[*Client]bool
 	clientMutex sync.RWMutex
 	broadcast   chan Message
@@ -42,6 +43,7 @@ func NewServer(port int) *Server {
 		Port:      port,
 		clients:   make(map[*Client]bool),
 		broadcast: make(chan Message, 256),
+		stopChan:  make(chan struct{}),
 	}
 }
 
@@ -145,6 +147,8 @@ func (s *Server) handleStartSpeedtest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.isRunning = true
+	// Create a new stopChan for this speedtest session
+	s.stopChan = make(chan struct{})
 	s.taskMutex.Unlock()
 	
 	var config map[string]interface{}
@@ -156,6 +160,14 @@ func (s *Server) handleStartSpeedtest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
+	slog.Info("Starting speedtest with config", slog.Any("config", config))
+	
+	// Send response immediately
+	s.sendJSON(w, map[string]interface{}{
+		"status":  "started",
+		"message": "Speedtest started successfully",
+	})
+	
 	// Start speedtest in background
 	go func() {
 		defer func() {
@@ -164,6 +176,7 @@ func (s *Server) handleStartSpeedtest(w http.ResponseWriter, r *http.Request) {
 			s.taskMutex.Unlock()
 		}()
 		
+		slog.Info("Broadcasting start message")
 		s.broadcast <- Message{
 			Type: "log",
 			Data: map[string]interface{}{
@@ -174,8 +187,10 @@ func (s *Server) handleStartSpeedtest(w http.ResponseWriter, r *http.Request) {
 		}
 		
 		// Run speedtest with config
+		slog.Info("Running speedtest task")
 		err := s.runSpeedtest(config)
 		if err != nil {
+			slog.Error("Speedtest failed: %v", err)
 			s.broadcast <- Message{
 				Type: "error",
 				Data: map[string]interface{}{
@@ -184,6 +199,7 @@ func (s *Server) handleStartSpeedtest(w http.ResponseWriter, r *http.Request) {
 				},
 			}
 		} else {
+			slog.Info("Speedtest completed successfully")
 			s.broadcast <- Message{
 				Type: "complete",
 				Data: map[string]interface{}{
@@ -193,11 +209,6 @@ func (s *Server) handleStartSpeedtest(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	
-	s.sendJSON(w, map[string]interface{}{
-		"status":  "started",
-		"message": "Speedtest started successfully",
-	})
 }
 
 func (s *Server) handleStopSpeedtest(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +225,16 @@ func (s *Server) handleStopSpeedtest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// TODO: Implement graceful stop
+	// Signal stop to the speedtest task
+	slog.Info("Stopping speedtest")
+	select {
+	case s.stopChan <- struct{}{}:
+		slog.Info("Stop signal sent successfully")
+	default:
+		slog.Warn("Stop signal channel full, closing channel")
+		close(s.stopChan)
+	}
+	
 	s.isRunning = false
 	
 	s.sendJSON(w, map[string]interface{}{
@@ -253,16 +273,29 @@ func (s *Server) sendError(w http.ResponseWriter, message string, code int) {
 
 func (s *Server) handleBroadcast() {
 	for msg := range s.broadcast {
-		s.clientMutex.RLock()
+		msgBytes := s.marshalMessage(msg)
+		
+		s.clientMutex.Lock()
+		clientCount := len(s.clients)
+		s.clientMutex.Unlock()
+		
+		if clientCount > 0 {
+			slog.Debug("Broadcasting message to %d clients", clientCount, slog.String("type", msg.Type))
+		}
+		
+		s.clientMutex.Lock()
 		for client := range s.clients {
 			select {
-			case client.send <- s.marshalMessage(msg):
+			case client.send <- msgBytes:
+				// Message sent successfully
 			default:
+				// Client's send channel is full, close and remove it
+				slog.Warn("Client send channel full, removing client")
 				close(client.send)
 				delete(s.clients, client)
 			}
 		}
-		s.clientMutex.RUnlock()
+		s.clientMutex.Unlock()
 	}
 }
 
@@ -293,6 +326,7 @@ func (s *Server) runSpeedtest(config map[string]interface{}) error {
 	}()
 	
 	task := job.NewTaskFromConfig(config, broadcastChan)
+	task.StopChan = s.stopChan
 	err := task.Run()
 	close(broadcastChan)
 	return err

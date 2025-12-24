@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,7 @@ type Task struct {
 	version *clash.Version
 	config  *clash.Config
 	proxies []*clash.Proxy
+	providers *clash.GetProvidersResp // 保存订阅信息
 
 	results maputil.SyncMap[string, *Result]
 	
@@ -276,6 +278,19 @@ func (t *Task) Clash() error {
 	providers, err := t.clash.GetProviderProxies()
 	if err != nil {
 		return err
+	}
+	
+	// 保存 providers 信息
+	t.providers = providers
+	
+	// 调试：输出订阅信息
+	if t.providers != nil && len(t.providers.Providers) > 0 {
+		slog.Info("found %d providers", len(t.providers.Providers))
+		for name := range t.providers.Providers {
+			slog.Info("provider: %s", name)
+		}
+	} else {
+		slog.Info("no providers found")
 	}
 
 	for _, proxy := range providers.FilterProxies() {
@@ -549,9 +564,13 @@ func (t *Task) RenderImage() {
 		colors = append(colors, rowColors)
 	}
 
+	// 生成标题，包含订阅信息
+	title := t.getImageTitle()
+	slog.Info("image title: %s", title)
+
 	// Create image config
 	config := util.DefaultTableImageConfig()
-	config.Title = "Clash 节点测速结果"
+	config.Title = title
 	config.Headers = headers
 	config.Rows = rows
 	config.Colors = colors
@@ -576,6 +595,32 @@ func (t *Task) RenderImage() {
 
 	fmt.Printf("\n✅ 图片已保存到: %s\n", filename)
 	slog.Info("image saved: %s", filename)
+}
+
+// getImageTitle 生成图片标题，包含订阅信息
+func (t *Task) getImageTitle() string {
+	if t.providers == nil || len(t.providers.Providers) == 0 {
+		return "节点测速结果"
+	}
+	
+	// 获取所有订阅名称
+	var providerNames []string
+	for name := range t.providers.Providers {
+		providerNames = append(providerNames, name)
+	}
+	sort.Strings(providerNames)
+	
+	// 如果只有一个订阅，显示订阅名称
+	if len(providerNames) == 1 {
+		return fmt.Sprintf("%s - 节点测速结果", providerNames[0])
+	}
+	
+	// 如果有多个订阅，显示数量
+	if len(providerNames) > 1 {
+		return fmt.Sprintf("节点测速结果 (%d个订阅)", len(providerNames))
+	}
+	
+	return "节点测速结果"
 }
 
 // Helper functions for colors
