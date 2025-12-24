@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clash Speedtest - Web UI</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .card h2 {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: #555;
+            font-size: 0.9em;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 0.95em;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(245, 87, 108, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+
+        .status-idle {
+            background: #e0e0e0;
+            color: #666;
+        }
+
+        .status-running {
+            background: #4caf50;
+            color: white;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+
+        .log-container {
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            margin-top: 15px;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            color: #d4d4d4;
+        }
+
+        .log-time {
+            color: #858585;
+            margin-right: 8px;
+        }
+
+        .log-info { color: #4fc3f7; }
+        .log-error { color: #f44336; }
+        .log-success { color: #4caf50; }
+
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .results-table th,
+        .results-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .results-table th {
+            background: #f5f5f5;
+            font-weight: 600;
+            color: #333;
+            position: sticky;
+            top: 0;
+        }
+
+        .results-table tr:hover {
+            background: #f9f9f9;
+        }
+
+        .speed-good { color: #4caf50; font-weight: 600; }
+        .speed-medium { color: #ff9800; font-weight: 600; }
+        .speed-poor { color: #f44336; font-weight: 600; }
+
+        .ping-good { color: #4caf50; }
+        .ping-medium { color: #ff9800; }
+        .ping-poor { color: #f44336; }
+
+        .results-container {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .filter-group input {
+            flex: 1;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <div class="header">
+                <h1>⚡ Clash Speedtest</h1>
+                <p>强大的 Clash 代理节点测速工具 - Web UI</p>
+            </div>
+
+            <div class="main-content">
+                <!-- Left Panel: Configuration -->
+                <div class="card">
+                    <h2>⚙️ 测速配置</h2>
+                    
+                    <div class="status-badge" :class="isRunning ? 'status-running' : 'status-idle'">
+                        {{ isRunning ? '🔄 测速中...' : '⏸️ 空闲' }}
+                    </div>
+
+                    <div class="form-group">
+                        <label>Clash 地址</label>
+                        <input v-model="config.clash_addr" type="text" placeholder="http://127.0.0.1:9090" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Clash 密钥 (可选)</label>
+                        <input v-model="config.clash_secret" type="password" placeholder="留空如果没有设置" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Clash 代理地址 (可选)</label>
+                        <input v-model="config.clash_proxy" type="text" placeholder="http://127.0.0.1:7890" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label>测速方式</label>
+                        <select v-model="config.download" :disabled="isRunning">
+                            <option value="cloudflare">Cloudflare</option>
+                            <option value="speedtest">Speedtest.net</option>
+                            <option value="fast">Fast.com</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>下载大小 (MB)</label>
+                        <input v-model.number="config.size" type="number" min="1" max="100" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label>线程数</label>
+                        <input v-model.number="config.threads" type="number" min="1" max="16" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label>并发节点数 (1-5)</label>
+                        <input v-model.number="config.concurrent" type="number" min="1" max="5" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input v-model="config.ping" type="checkbox" :disabled="isRunning">
+                            启用 Ping 监控
+                        </label>
+                    </div>
+
+                    <div v-if="config.ping" class="form-group">
+                        <label>Ping 间隔 (秒)</label>
+                        <input v-model.number="config.ping_interval" type="number" min="10" max="300" :disabled="isRunning">
+                    </div>
+
+                    <div v-if="config.ping" class="form-group">
+                        <label>Ping 超时 (毫秒)</label>
+                        <input v-model.number="config.ping_timeout" type="number" min="1000" max="10000" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label>包含节点 (逗号分隔)</label>
+                        <input v-model="includesText" type="text" placeholder="例如: 香港,美国" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label>排除节点 (逗号分隔)</label>
+                        <input v-model="excludesText" type="text" placeholder="例如: Premium" :disabled="isRunning">
+                    </div>
+
+                    <div class="form-group">
+                        <label>超时时间 (秒)</label>
+                        <input v-model.number="config.timeout" type="number" min="5" max="300" :disabled="isRunning">
+                    </div>
+
+                    <button v-if="!isRunning" @click="loadProxies" class="btn btn-primary" style="margin-top: 5px;">
+                        📋 加载节点列表
+                    </button>
+
+                    <button v-if="!isRunning" @click="startSpeedtest" class="btn btn-primary">
+                        🚀 开始测速
+                    </button>
+                    <button v-else @click="stopSpeedtest" class="btn btn-danger">
+                        ⏹️ 停止测速
+                    </button>
+
+                    <div v-if="isRunning && progress.total > 0" class="progress-bar">
+                        <div class="progress-fill" :style="{width: (progress.current / progress.total * 100) + '%'}"></div>
+                    </div>
+                    <div v-if="isRunning && progress.total > 0" style="text-align: center; margin-top: 8px; font-size: 0.9em; color: #666;">
+                        {{ progress.current }} / {{ progress.total }} - {{ progress.proxy_name }}
+                    </div>
+                </div>
+
+                <!-- Right Panel: Results and Logs -->
+                <div>
+                    <!-- Proxy List -->
+                    <div class="card" v-if="proxies.length > 0">
+                        <h2>📡 节点列表 ({{ proxies.length }})</h2>
+                        
+                        <div class="results-container">
+                            <table class="results-table">
+                                <thead>
+                                    <tr>
+                                        <th>节点名称</th>
+                                        <th>类型</th>
+                                        <th>状态</th>
+                                        <th>当前速度</th>
+                                        <th v-if="config.ping">延迟</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="proxy in proxies" :key="proxy.name">
+                                        <td>{{ proxy.name }}</td>
+                                        <td>{{ proxy.type }}</td>
+                                        <td>
+                                            <span v-if="proxy.status === 'testing'" style="color: #2196F3;">⏳ 测速中</span>
+                                            <span v-else-if="proxy.status === 'completed'" style="color: #4caf50;">✅ 完成</span>
+                                            <span v-else-if="proxy.status === 'failed'" style="color: #f44336;">❌ 失败</span>
+                                            <span v-else style="color: #999;">⏸️ 等待</span>
+                                        </td>
+                                        <td>
+                                            <span v-if="proxy.current_speed > 0" :class="getSpeedClass(proxy.current_speed)">
+                                                {{ proxy.current_speed.toFixed(2) }} MB/s
+                                            </span>
+                                            <span v-else-if="proxy.final_speed > 0" :class="getSpeedClass(proxy.final_speed)">
+                                                {{ proxy.final_speed.toFixed(2) }} MB/s
+                                            </span>
+                                            <span v-else style="color: #999;">-</span>
+                                        </td>
+                                        <td v-if="config.ping">
+                                            <span v-if="proxy.ping > 0" :class="getPingClass(proxy.ping)">
+                                                {{ proxy.ping }}ms
+                                            </span>
+                                            <span v-else style="color: #999;">-</span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card" :style="proxies.length > 0 ? 'margin-top: 20px;' : ''">
+                        <h2>📊 测速结果</h2>
+                        
+                        <div v-if="results.length === 0" class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,6V12L16,15L17,13.5L13,11V6H11Z"/>
+                            </svg>
+                            <p>暂无测速结果</p>
+                            <p style="font-size: 0.9em; margin-top: 10px;">点击左侧"开始测速"按钮开始测试</p>
+                        </div>
+
+                        <div v-else class="results-container">
+                            <table class="results-table">
+                                <thead>
+                                    <tr>
+                                        <th>节点名称</th>
+                                        <th>类型</th>
+                                        <th>平均速度</th>
+                                        <th v-if="config.ping">Ping 最小</th>
+                                        <th v-if="config.ping">Ping 最大</th>
+                                        <th v-if="config.ping">Ping 平均</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="result in results" :key="result.proxy_name">
+                                        <td>{{ result.proxy_name }}</td>
+                                        <td>{{ result.proxy_type }}</td>
+                                        <td :class="getSpeedClass(result.speed)">
+                                            {{ result.speed > 0 ? result.speed.toFixed(2) + ' MB/s' : '无法连接' }}
+                                        </td>
+                                        <td v-if="config.ping" :class="getPingClass(result.ping_min)">
+                                            {{ result.ping_count > 0 ? result.ping_min + 'ms' : 'N/A' }}
+                                        </td>
+                                        <td v-if="config.ping" :class="getPingClass(result.ping_max)">
+                                            {{ result.ping_count > 0 ? result.ping_max + 'ms' : 'N/A' }}
+                                        </td>
+                                        <td v-if="config.ping" :class="getPingClass(result.ping_avg)">
+                                            {{ result.ping_count > 0 ? result.ping_avg + 'ms' : 'N/A' }}
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-top: 20px;">
+                        <h2>📝 运行日志</h2>
+                        <div class="log-container" ref="logContainer">
+                            <div v-for="(log, index) in logs" :key="index" class="log-entry">
+                                <span class="log-time">{{ log.time }}</span>
+                                <span :class="'log-' + log.level">{{ log.message }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    config: {
+                        clash_addr: 'http://127.0.0.1:9090',
+                        clash_secret: '',
+                        clash_proxy: '',
+                        size: 10,
+                        threads: 1,
+                        download: 'cloudflare',
+                        concurrent: 2,
+                        ping: false,
+                        ping_interval: 60,
+                        ping_timeout: 5000,
+                        timeout: 60,
+                        format: 'txt',
+                        includes: [],
+                        excludes: []
+                    },
+                    includesText: '',
+                    excludesText: '',
+                    isRunning: false,
+                    proxies: [],
+                    results: [],
+                    logs: [],
+                    progress: {
+                        current: 0,
+                        total: 0,
+                        proxy_name: ''
+                    },
+                    eventSource: null
+                };
+            },
+            methods: {
+                async loadProxies() {
+                    try {
+                        const params = new URLSearchParams({
+                            clash_addr: this.config.clash_addr,
+                            clash_secret: this.config.clash_secret
+                        });
+
+                        const response = await fetch('/api/proxies?' + params);
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            this.proxies = data.proxies.map(p => ({
+                                name: p.name,
+                                type: p.type,
+                                status: 'idle',
+                                current_speed: 0,
+                                final_speed: 0,
+                                ping: 0
+                            }));
+                            this.addLog('success', `已加载 ${this.proxies.length} 个节点`);
+                        } else {
+                            this.addLog('error', data.error || '加载节点失败');
+                        }
+                    } catch (error) {
+                        this.addLog('error', '网络错误: ' + error.message);
+                    }
+                },
+                async startSpeedtest() {
+                    // Parse includes/excludes
+                    this.config.includes = this.includesText.split(',').map(s => s.trim()).filter(s => s);
+                    this.config.excludes = this.excludesText.split(',').map(s => s.trim()).filter(s => s);
+
+                    this.results = [];
+                    this.logs = [];
+                    this.progress = { current: 0, total: 0, proxy_name: '' };
+
+                    try {
+                        const response = await fetch('/api/speedtest/start', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.config)
+                        });
+
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            this.isRunning = true;
+                            this.connectWebSocket();
+                            this.addLog('info', data.message || 'Speedtest started');
+                        } else {
+                            this.addLog('error', data.error || 'Failed to start speedtest');
+                        }
+                    } catch (error) {
+                        this.addLog('error', 'Network error: ' + error.message);
+                    }
+                },
+                async stopSpeedtest() {
+                    try {
+                        const response = await fetch('/api/speedtest/stop', {
+                            method: 'POST'
+                        });
+
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            this.isRunning = false;
+                            this.disconnectWebSocket();
+                            this.addLog('info', data.message || 'Speedtest stopped');
+                        } else {
+                            this.addLog('error', data.error || 'Failed to stop speedtest');
+                        }
+                    } catch (error) {
+                        this.addLog('error', 'Network error: ' + error.message);
+                    }
+                },
+                connectWebSocket() {
+                    this.eventSource = new EventSource('/ws');
+                    
+                    this.eventSource.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            this.handleMessage(message);
+                        } catch (error) {
+                            console.error('Failed to parse message:', error);
+                        }
+                    };
+
+                    this.eventSource.onerror = () => {
+                        this.addLog('error', 'WebSocket connection error');
+                        this.disconnectWebSocket();
+                    };
+                },
+                disconnectWebSocket() {
+                    if (this.eventSource) {
+                        this.eventSource.close();
+                        this.eventSource = null;
+                    }
+                },
+                handleMessage(message) {
+                    switch (message.type) {
+                        case 'connected':
+                            this.addLog('success', message.data.message);
+                            break;
+                        case 'log':
+                            this.addLog(message.data.level, message.data.message);
+                            break;
+                        case 'proxies':
+                            // Update proxy list with status
+                            this.proxies = message.data.proxies.map(p => ({
+                                name: p.name,
+                                type: p.type,
+                                status: 'idle',
+                                current_speed: 0,
+                                final_speed: 0,
+                                ping: 0
+                            }));
+                            break;
+                        case 'progress':
+                            this.progress = message.data;
+                            // Update proxy status
+                            const testingProxy = this.proxies.find(p => p.name === message.data.proxy_name);
+                            if (testingProxy) {
+                                testingProxy.status = message.data.status;
+                            }
+                            break;
+                        case 'speed_update':
+                            // Update current speed
+                            const speedProxy = this.proxies.find(p => p.name === message.data.proxy_name);
+                            if (speedProxy) {
+                                speedProxy.current_speed = message.data.speed;
+                            }
+                            break;
+                        case 'result':
+                            this.updateResult(message.data);
+                            // Update proxy with final result
+                            const resultProxy = this.proxies.find(p => p.name === message.data.proxy_name);
+                            if (resultProxy) {
+                                resultProxy.status = message.data.speed > 0 ? 'completed' : 'failed';
+                                resultProxy.final_speed = message.data.speed;
+                                resultProxy.current_speed = 0;
+                                if (message.data.ping_avg > 0) {
+                                    resultProxy.ping = message.data.ping_avg;
+                                }
+                            }
+                            break;
+                        case 'all_results':
+                            this.results = message.data.results;
+                            break;
+                        case 'complete':
+                            this.isRunning = false;
+                            this.addLog('success', message.data.message);
+                            this.disconnectWebSocket();
+                            break;
+                        case 'error':
+                            this.isRunning = false;
+                            this.addLog('error', message.data.message);
+                            this.disconnectWebSocket();
+                            break;
+                    }
+                },
+                updateResult(data) {
+                    const index = this.results.findIndex(r => r.proxy_name === data.proxy_name);
+                    if (index >= 0) {
+                        this.results[index] = data;
+                    } else {
+                        this.results.push(data);
+                    }
+                },
+                addLog(level, message) {
+                    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+                    this.logs.push({ level, message, time });
+                    
+                    // Auto scroll to bottom
+                    this.$nextTick(() => {
+                        const container = this.$refs.logContainer;
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    });
+
+                    // Limit log entries
+                    if (this.logs.length > 100) {
+                        this.logs.shift();
+                    }
+                },
+                getSpeedClass(speed) {
+                    if (speed >= 5) return 'speed-good';
+                    if (speed >= 2) return 'speed-medium';
+                    return 'speed-poor';
+                },
+                getPingClass(ping) {
+                    if (ping === 0) return '';
+                    if (ping < 100) return 'ping-good';
+                    if (ping < 300) return 'ping-medium';
+                    return 'ping-poor';
+                }
+            },
+            beforeUnmount() {
+                this.disconnectWebSocket();
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

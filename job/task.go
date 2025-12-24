@@ -36,6 +36,7 @@ type Task struct {
 	Excludes []string `yaml:"excludes"`
 	Confirm  bool     `yaml:"confirm"`
 	Output   string   `yaml:"output"`
+	Timeout  int      `yaml:"timeout"` // timeout in seconds
 	
 	// Ping configuration
 	EnablePing   bool `yaml:"ping"`
@@ -67,6 +68,11 @@ func Run() error {
 
 	if t.Threads < 1 || t.Threads > 16 {
 		t.Threads = 2
+	}
+	
+	// Set default timeout
+	if t.Timeout <= 0 {
+		t.Timeout = 60 // default 60 seconds
 	}
 	
 	// Set default concurrent nodes

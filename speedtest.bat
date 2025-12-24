@@ -45,7 +45,7 @@ REM Download Configuration
 set THREADS=1
 REM Number of download threads per node (1-3)
 
-set SIZE=20
+set SIZE=10
 REM Download size per thread in MB (10-20)
 
 REM First parameter as filter keyword

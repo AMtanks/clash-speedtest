@@ -8,6 +8,7 @@
 
 ## ✨ 特性
 
+- 🌐 **Web UI 界面**：全新的 Web 界面，支持所有配置项的可视化操作
 - 🚀 **多种测速方式**：支持 Cloudflare、Speedtest.net、Fast.com
 - ⚡ **并发测速**：支持多节点同时测试，大幅提升测速效率（最高 5 倍速度）
 - 📊 **多种输出格式**：支持文本表格和精美图片输出
@@ -15,6 +16,7 @@
 - 🎯 **灵活的节点筛选**：支持包含/排除规则
 - 🌈 **多协议支持**：支持 Shadowsocks、VMess、Trojan、VLESS、Hysteria2、AnyTLS 等
 - 🎨 **彩色输出**：根据速度/延迟自动着色，一目了然
+- 📱 **实时监控**：Web UI 实时显示测速进度和日志
 
 ## 📦 安装
 
@@ -32,7 +34,76 @@ go build -ldflags '-s -w' -o clash-speedtest.exe ./cmd
 
 ## 🚀 快速开始
 
-### 基础用法
+### 🌐 Web UI 模式（推荐）
+
+**Windows 用户**：
+```bash
+# 方法 1: 双击运行 start-web.bat（推荐）
+start-web.bat
+
+# 方法 2: 命令行启动
+clash-speedtest.exe web --port 8080
+```
+
+**其他系统**：
+```bash
+# 启动 Web 服务器
+./clash-speedtest web --port 8080
+
+# 在浏览器中访问
+http://localhost:8080
+```
+
+**Web UI 特性**：
+- ✅ 可视化配置所有参数
+- ✅ 实时显示测速进度
+- ✅ 彩色结果展示
+- ✅ 运行日志实时输出
+- ✅ 无需记忆命令行参数
+
+详细使用说明请查看 [Web UI 使用指南](./WEB_UI_README.md)
+
+---
+
+### 💻 CLI 模式
+```
+
+## 🚀 快速开始
+
+### 🌐 Web UI 模式（推荐）
+
+**Windows 用户**：
+```bash
+# 方法 1: 双击运行 start-web.bat（推荐）
+start-web.bat
+
+# 方法 2: 命令行启动
+clash-speedtest.exe web --port 8080
+```
+
+**其他系统**：
+```bash
+# 启动 Web 服务器
+./clash-speedtest web --port 8080
+
+# 在浏览器中访问
+http://localhost:8080
+```
+
+**Web UI 特性**：
+- ✅ 可视化配置所有参数
+- ✅ 实时显示测速进度
+- ✅ 彩色结果展示
+- ✅ 运行日志实时输出
+- ✅ 无需记忆命令行参数
+
+详细使用说明请查看 [Web UI 使用指南](./WEB_UI_README.md)
+
+---
+
+### 💻 CLI 模式
+
+#### 基础用法
 
 ```bash
 # 测试所有节点
