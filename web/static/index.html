@@ -295,7 +295,10 @@
 
                     <div class="form-group">
                         <label>Clash 密钥 (可选)</label>
-                        <input v-model="config.clash_secret" type="password" placeholder="留空如果没有设置" :disabled="isRunning">
+                        <input v-model="config.clash_secret" type="password" placeholder="如果 Clash 设置了 secret，请填写" :disabled="isRunning">
+                        <small style="color: #999; font-size: 0.85em; display: block; margin-top: 4px;">
+                            💡 提示：如果出现 401 错误，请检查 Clash 配置文件中的 secret 字段
+                        </small>
                     </div>
 
                     <div class="form-group">
@@ -493,7 +496,7 @@
                 return {
                     config: {
                         clash_addr: 'http://127.0.0.1:9090',
-                        clash_secret: '',
+                        clash_secret: 'set-your-secret',
                         clash_proxy: '',
                         size: 10,
                         threads: 1,
@@ -524,6 +527,8 @@
             methods: {
                 async loadProxies() {
                     try {
+                        this.addLog('info', '正在连接 Clash...');
+                        
                         const params = new URLSearchParams({
                             clash_addr: this.config.clash_addr,
                             clash_secret: this.config.clash_secret
@@ -541,12 +546,19 @@
                                 final_speed: 0,
                                 ping: 0
                             }));
-                            this.addLog('success', `已加载 ${this.proxies.length} 个节点`);
+                            this.addLog('success', `✅ 已加载 ${this.proxies.length} 个节点`);
                         } else {
-                            this.addLog('error', data.error || '加载节点失败');
+                            const errorMsg = data.error || '加载节点失败';
+                            this.addLog('error', '❌ ' + errorMsg);
+                            
+                            // 如果是 401 错误，给出更明确的提示
+                            if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) {
+                                this.addLog('error', '💡 请检查 Clash 密钥是否正确配置');
+                                this.addLog('info', '提示：在 Clash 配置文件中查找 "secret" 字段');
+                            }
                         }
                     } catch (error) {
-                        this.addLog('error', '网络错误: ' + error.message);
+                        this.addLog('error', '❌ 网络错误: ' + error.message);
                     }
                 },
                 async startSpeedtest() {
@@ -558,7 +570,19 @@
                     this.logs = [];
                     this.progress = { current: 0, total: 0, proxy_name: '' };
 
+                    // 如果还没有加载节点列表，先加载
+                    if (this.proxies.length === 0) {
+                        this.addLog('info', '正在加载节点列表...');
+                        await this.loadProxies();
+                        if (this.proxies.length === 0) {
+                            this.addLog('error', '❌ 无法加载节点列表，请检查配置');
+                            return;
+                        }
+                    }
+
                     try {
+                        this.addLog('info', '正在启动测速任务...');
+                        
                         const response = await fetch('/api/speedtest/start', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -570,12 +594,18 @@
                         if (response.ok) {
                             this.isRunning = true;
                             this.connectWebSocket();
-                            this.addLog('info', data.message || 'Speedtest started');
+                            this.addLog('success', '✅ ' + (data.message || 'Speedtest started'));
                         } else {
-                            this.addLog('error', data.error || 'Failed to start speedtest');
+                            const errorMsg = data.error || 'Failed to start speedtest';
+                            this.addLog('error', '❌ ' + errorMsg);
+                            
+                            // 如果是 401 错误，给出提示
+                            if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) {
+                                this.addLog('error', '💡 请检查 Clash 密钥是否正确');
+                            }
                         }
                     } catch (error) {
-                        this.addLog('error', 'Network error: ' + error.message);
+                        this.addLog('error', '❌ 网络错误: ' + error.message);
                     }
                 },
                 async stopSpeedtest() {

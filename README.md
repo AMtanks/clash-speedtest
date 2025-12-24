@@ -47,27 +47,6 @@ clash-speedtest.exe web --port 8080
 
 **其他系统**：
 ```bash
-# 启动 Web 服务器
-./clash-speedtest web --port 8080
-
-# 在浏览器中访问
-http://localhost:8080
-```
-
-**Web UI 特性**：
-- ✅ 可视化配置所有参数
-- ✅ 实时显示测速进度
-- ✅ 彩色结果展示
-- ✅ 运行日志实时输出
-- ✅ 无需记忆命令行参数
-
-详细使用说明请查看 [Web UI 使用指南](./WEB_UI_README.md)
-
----
-
-### 💻 CLI 模式
-```
-
 ## 🚀 快速开始
 
 ### 🌐 Web UI 模式（推荐）
@@ -97,7 +76,7 @@ http://localhost:8080
 - ✅ 运行日志实时输出
 - ✅ 无需记忆命令行参数
 
-详细使用说明请查看 [Web UI 使用指南](./WEB_UI_README.md)
+**⚠️ 遇到 401 错误？** 请查看 [配置指南](./CONFIG_GUIDE.md) 了解如何正确配置 Clash 密钥。
 
 ---
 

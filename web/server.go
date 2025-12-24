@@ -109,15 +109,23 @@ func (s *Server) handleGetProxies(w http.ResponseWriter, r *http.Request) {
 	}
 	clashSecret := r.URL.Query().Get("clash_secret")
 	
+	slog.Info("Getting proxies from Clash", 
+		slog.String("addr", clashAddr), 
+		slog.Bool("has_secret", clashSecret != ""))
+	
 	client := clash.NewClient(clashAddr, clashSecret)
 	
 	providers, err := client.GetProviderProxies()
 	if err != nil {
-		s.sendError(w, fmt.Sprintf("Failed to get proxies: %v", err), http.StatusInternalServerError)
+		errMsg := fmt.Sprintf("Failed to get proxies: %v", err)
+		slog.Error(errMsg)
+		s.sendError(w, errMsg, http.StatusInternalServerError)
 		return
 	}
 	
 	proxies := providers.FilterProxies()
+	slog.Info("Successfully loaded proxies", slog.Int("count", len(proxies)))
+	
 	s.sendJSON(w, map[string]interface{}{
 		"proxies": proxies,
 		"total":   len(proxies),
